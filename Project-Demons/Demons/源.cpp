@@ -10,8 +10,8 @@
 
 int main(int argc, char* argv[])
 {
-	const std::string fixed_image_path = "D:/DataSet/dataset-temp/test3/dataset5-templ.png";
-	const std::string moved_image_path = "D:/DataSet/dataset-temp/test3/dataset5-tested.png";
+	const std::string fixed_image_path = "D:/Code-VS/Project-Demons/Project-Demons/imgs/lena0.png";
+	const std::string moved_image_path = "D:/Code-VS/Project-Demons/Project-Demons/imgs/lena1.png";
 
 	cv::Mat fixed_image = cv::imread(fixed_image_path);
 	cv::Mat moved_image = cv::imread(moved_image_path);
@@ -19,14 +19,16 @@ int main(int argc, char* argv[])
 	demons_params_t demons_params;
 	demons_params.niter_ = 100;
 	demons_params.alpha_ = 0.6;
-	demons_params.sigma_fluid_ = 0.3;
-	demons_params.sigma_diffusion_ = 0.6;
+	demons_params.sigma_fluid_ = 1.0;	// 0.3
+	demons_params.sigma_diffusion_ = 6.0;	// 0.6
 
 	Demons* demons = new Demons(demons_params);
 	demons->SingleScale(fixed_image, moved_image);
 
 	cv::namedWindow("res-map", cv::WINDOW_NORMAL);
 	cv::imshow("res-map", demons->res_image_);
+	cv::imwrite("lena-res-map.png", demons->res_image_);
+	cv::imwrite("lena1-warpped.png", demons->moved_image_warpped_);
 	cv::waitKey();
 
 	delete demons;
