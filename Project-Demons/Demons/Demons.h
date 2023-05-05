@@ -27,6 +27,7 @@ private:
 	cv::Mat moved_image_;
 
 public:
+	cv::Mat flow_;
 	cv::Mat res_image_;
 	cv::Mat moved_image_warpped_;
 	demons_params_t demons_params;
@@ -52,6 +53,24 @@ public:
 /// @return 相似度
 float DemonsSingle(const cv::Mat& S0,
 	const cv::Mat& M0,
+	cv::Mat& sx,
+	cv::Mat& sy,
+	const int niter,
+	const float alpha,
+	const float sigma_fluid,
+	const  float sigma_diffusion);
+
+/// @brief 多尺度Demons算法
+/// @param fixed_image_pyramid 固定图像金字塔
+/// @param moved_image_pyramid 浮动图像金字塔
+/// @param sx 最优水平方向位移场
+/// @param sy 最优竖直方向位移场
+/// @param niter 迭代次数
+/// @param alpha 速度扩散系数
+/// @param sigma_fluid fluid 近似正则化系数
+/// @param sigma_diffusion diffusion 近似正则化系数
+void DemonsMulti(const std::vector<cv::Mat>& fixed_image_pyramid,
+	const std::vector<cv::Mat>& moved_image_pyramid,
 	cv::Mat& sx,
 	cv::Mat& sy,
 	const int niter,
@@ -101,9 +120,9 @@ void GaussianSmoothing(const cv::Mat& src, cv::Mat& dst, const float sigma);
 /// @brief 构造图像金字塔
 /// @param src 源图像
 /// @param gauss_pyramid 图像金字塔
-/// @param layers 图像金字塔层数
+/// @param min_width 用来自动计算图像金字塔层数
 void GaussPyramid(const cv::Mat& src,
-	std::vector<cv::Mat>& gauss_pyramid, const int layers = 3);
+	std::vector<cv::Mat>& gauss_pyramid, const int min_width = 30);
 
 /// @brief 计算映射后的mask，像素的位置经过映射后超边界则将其置为0，统计相似度时不再考虑
 /// @param Tx 水平方向位移场

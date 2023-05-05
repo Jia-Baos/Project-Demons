@@ -17,7 +17,7 @@ Demons::~Demons()
 	std::cout << "Destory the class..." << std::endl;
 }
 
-void  Demons::SingleScale(const cv::Mat& fixed_image, const cv::Mat& moved_image)
+void Demons::SingleScale(const cv::Mat& fixed_image, const cv::Mat& moved_image)
 {
 	cv::cvtColor(fixed_image, this->fixed_image_, cv::COLOR_BGR2GRAY);
 	cv::cvtColor(moved_image, this->moved_image_, cv::COLOR_BGR2GRAY);
@@ -31,7 +31,41 @@ void  Demons::SingleScale(const cv::Mat& fixed_image, const cv::Mat& moved_image
 		demons_params.sigma_fluid_,
 		demons_params.sigma_diffusion_);
 
-	MovePixels(this->moved_image_, this->moved_image_warpped_, flow_x, flow_y, cv::INTER_CUBIC);
+	std::vector<cv::Mat> flow{ flow_x,flow_y };
+	cv::merge(flow, this->flow_);
+
+	MovePixels(this->moved_image_, this->moved_image_warpped_,
+		flow_x, flow_y, cv::INTER_CUBIC);
+	this->moved_image_warpped_.convertTo(this->moved_image_warpped_, CV_8UC1);
+
+	cv::absdiff(this->fixed_image_, this->moved_image_warpped_, this->res_image_);
+}
+
+void Demons::MultiScale(const cv::Mat& fixed_image, const cv::Mat& moved_image)
+{
+	cv::cvtColor(fixed_image, this->fixed_image_, cv::COLOR_BGR2GRAY);
+	cv::cvtColor(moved_image, this->moved_image_, cv::COLOR_BGR2GRAY);
+
+	std::vector<cv::Mat> fixed_image_pyramid;
+	std::vector<cv::Mat> moved_image_pyramid;
+	GaussPyramid(this->fixed_image_, fixed_image_pyramid);
+	GaussPyramid(this->moved_image_, moved_image_pyramid);
+
+	cv::Mat flow_x = cv::Mat::zeros(this->fixed_image_.size(), CV_32FC1);
+	cv::Mat flow_y = cv::Mat::zeros(this->fixed_image_.size(), CV_32FC1);
+
+	DemonsMulti(fixed_image_pyramid, moved_image_pyramid,
+		flow_x, flow_y,
+		demons_params.niter_,
+		demons_params.alpha_,
+		demons_params.sigma_fluid_,
+		demons_params.sigma_diffusion_);
+
+	std::vector<cv::Mat> flow{ flow_x,flow_y };
+	cv::merge(flow, this->flow_);
+
+	MovePixels(this->moved_image_, this->moved_image_warpped_,
+		flow_x, flow_y, cv::INTER_CUBIC);
 	this->moved_image_warpped_.convertTo(this->moved_image_warpped_, CV_8UC1);
 
 	cv::absdiff(this->fixed_image_, this->moved_image_warpped_, this->res_image_);
@@ -45,42 +79,28 @@ void Demons::DemonsRefinement(const cv::Mat& fixed_image, const cv::Mat& moved_i
 	cv::Mat moved_image_temp;
 	std::vector<cv::Mat> flow_split;
 	cv::split(flow, flow_split);
-	MovePixels(this->moved_image_, moved_image_temp, flow_split[0], flow_split[1], cv::INTER_CUBIC);
+	MovePixels(this->moved_image_, moved_image_temp,
+		flow_split[0], flow_split[1], cv::INTER_CUBIC);
 
 	cv::Mat flow_x = cv::Mat::zeros(this->fixed_image_.size(), CV_32FC1);
 	cv::Mat flow_y = cv::Mat::zeros(this->fixed_image_.size(), CV_32FC1);
 	float cc = DemonsSingle(this->fixed_image_, moved_image_temp,
-		flow_x, flow_y,
+		flow_x,
+		flow_y,
 		demons_params.niter_,
 		demons_params.alpha_,
 		demons_params.sigma_fluid_,
 		demons_params.sigma_diffusion_);
 
-	cv::merge(flow_x, flow_y);
-	MovePixels(moved_image_temp, this->moved_image_warpped_, flow_x, flow_y, cv::INTER_CUBIC);
-	this->moved_image_warpped_.convertTo(this->moved_image_warpped_, CV_8UC1);
-
-	cv::absdiff(this->fixed_image_, this->moved_image_warpped_, this->res_image_);
-}
-
-void  Demons::MultiScale(const cv::Mat& fixed_image, const cv::Mat& moved_image)
-{
+	flow_split[0] = flow_split[0] + flow_x;
+	flow_split[1] = flow_split[1] + flow_y;
+	cv::merge(flow_split, flow);
 }
 
 /************************************************************************/
 /*    Demons Single                                                     */
 /************************************************************************/
 
-/// @brief 单尺度Demons算法
-/// @param S0 固定图像
-/// @param M0 浮动图像
-/// @param sx 最优水平方向位移场
-/// @param sy 最优竖直方向位移场
-/// @param niter 迭代次数
-/// @param alpha 速度扩散系数
-/// @param sigma_fluid fluid 近似正则化系数
-/// @param sigma_diffusion diffusion 近似正则化系数
-/// @return 相似度
 float DemonsSingle(const cv::Mat& S0,
 	const cv::Mat& M0,
 	cv::Mat& sx,
@@ -99,12 +119,12 @@ float DemonsSingle(const cv::Mat& S0,
 	// 当前最佳相似度
 	float cc_min = FLT_MIN;
 
-	// 初始化位移场为0
-	cv::Mat vx = cv::Mat::zeros(S.size(), CV_32FC1);
-	cv::Mat vy = cv::Mat::zeros(S.size(), CV_32FC1);
-
 	// 用于存储当前最佳位移场，不断进行更新
 	cv::Mat sx_min, sy_min;
+
+	// 初始化速度场为0
+	cv::Mat vx = cv::Mat::zeros(S.size(), CV_32FC1);
+	cv::Mat vy = cv::Mat::zeros(S.size(), CV_32FC1);
 
 	for (int i = 0; i < niter; i++)
 	{
@@ -135,12 +155,15 @@ float DemonsSingle(const cv::Mat& S0,
 		// 对浮动图像M进行像素重采样
 		MovePixels(M, M1, sx, sy, cv::INTER_CUBIC);
 		// 计算F、M1的相似度
-		float cc_cur = ComputeCCMask(S, M1, mask);
+		float cc_curr = ComputeCCMask(S, M1, mask);
 
-		if (cc_cur > cc_min)
+		if (cc_curr > cc_min)
 		{
+			// 如果相关系数提高，则更新M1、最佳相关系数，位移场
+			// 需要注意的是，即使当前的更新使得相关系数降低，我们也会承认这次更新的结果，但我们拒绝此次更新产生的位移场
+			// 我们可以理解为算法在此时陷入局部极值，但不可否认的是继续迭代是有可能获取更好的结果的，故不应在此时终止迭代
 			std::cout << "epoch = " << i << "; cc = " << cc_min << std::endl;
-			cc_min = cc_cur;
+			cc_min = cc_curr;
 			sx_min = sx.clone();
 			sy_min = sy.clone();
 		}
@@ -153,13 +176,106 @@ float DemonsSingle(const cv::Mat& S0,
 }
 
 /************************************************************************/
+/*    Demons Multi                                                     */
+/************************************************************************/
+
+void DemonsMulti(const std::vector<cv::Mat>& fixed_image_pyramid,
+	const std::vector<cv::Mat>& moved_image_pyramid,
+	cv::Mat& sx,
+	cv::Mat& sy,
+	const int niter,
+	const float alpha,
+	const float sigma_fluid,
+	const  float sigma_diffusion)
+{
+	const int layers = fixed_image_pyramid.size();
+	std::vector<cv::Mat> moved_image_pyramid_tmp = moved_image_pyramid;
+
+	// 用于存储当前最佳位移场，不断进行更新
+	cv::Mat sx_min, sy_min;
+
+	for (int iter = 0; iter < layers; iter++)
+	{
+		std::cout << "curr layer: " << iter << std::endl;
+
+		const cv::Mat fixed_image_curr = fixed_image_pyramid[iter];
+		const cv::Mat moved_image_curr = moved_image_pyramid_tmp[iter];
+
+		// 初始化速度场为0
+		cv::Mat vx = cv::Mat::zeros(fixed_image_curr.size(), CV_32FC1);
+		cv::Mat vy = cv::Mat::zeros(fixed_image_curr.size(), CV_32FC1);
+
+		// 将参考图像和浮动图像都转换为浮点型矩阵
+		cv::Mat S, M;
+		fixed_image_curr.convertTo(S, CV_32FC1);
+		moved_image_curr.convertTo(M, CV_32FC1);
+		cv::Mat M1 = M.clone();
+
+		// 当前最佳相似度
+		float cc_min = FLT_MIN;
+
+		for (int i = 0; i < niter; i++)
+		{
+			// 在此处修改计算位移场的方法
+			cv::Mat ux, uy;
+			ActiveDemonsForce(S, M1, ux, uy, alpha);
+			//ThirionDemonsForce(S, M1, ux, uy, alpha);
+			//SymmetricDemonsForce(S, M1, ux, uy, alpha);
+
+			// 高斯滤波对计算的位移场进行平滑
+			GaussianSmoothing(ux, ux, sigma_fluid);
+			GaussianSmoothing(uy, uy, sigma_fluid);
+
+			// 将位移场累加
+			vx = vx + 0.75 * ux;
+			vy = vy + 0.75 * uy;
+
+			// 再次利用高斯滤波对计算的位移场进行平滑
+			GaussianSmoothing(vx, vx, sigma_diffusion);
+			GaussianSmoothing(vy, vy, sigma_diffusion);
+
+			// 将累加的位移场转换为微分同胚映射
+			ExpField(vx, vy, sx, sy);
+
+			cv::Mat mask;
+			// 计算黑色边缘的mask掩码矩阵
+			ComputeMask(sx, sy, mask);
+			// 对浮动图像M进行像素重采样
+			MovePixels(M, M1, sx, sy, cv::INTER_CUBIC);
+			// 计算F、M1的相似度
+			const float cc_curr = ComputeCCMask(S, M1, mask);
+
+			if (cc_curr > cc_min)
+			{
+				// 如果相关系数提高，则更新M1、最佳相关系数，位移场
+				// 需要注意的是，即使当前的更新使得相关系数降低，我们也会承认这次更新的结果，但我们拒绝此次更新产生的位移场
+				// 我们可以理解为算法在此时陷入局部极值，但不可否认的是继续迭代是有可能获取更好的结果的，故不应在此时终止迭代
+				std::cout << "epoch = " << i << "; cc = " << cc_min << std::endl;
+				cc_min = cc_curr;
+				sx_min = sx.clone();
+				sy_min = sy.clone();
+			}
+		}
+
+		// 得到当前层的最佳微分同胚映射，若不是最底层需要进行上采样，以便进行下一次迭代
+		sx = sx_min.clone();
+		sy = sy_min.clone();
+
+		if (iter < layers - 1)
+		{
+			cv::pyrUp(sx, sx, fixed_image_pyramid[iter + 1].size());
+			cv::pyrUp(sy, sy, fixed_image_pyramid[iter + 1].size());
+
+			// 根据当前层所计算的最优微分同胚映射对下一层的浮动图像图像进行wrap
+			MovePixels(moved_image_pyramid[iter + 1], moved_image_pyramid_tmp[iter + 1], sx, sy, cv::INTER_CUBIC);
+		}
+	}
+}
+
+/************************************************************************/
 /*    Driving force                                                     */
 /************************************************************************/
 
-/// @brief 利用差分法计算梯度
-/// @param src 原图像
-/// @param Fx 水平方向梯度
-/// @param Fy 竖直方向梯度
 void ComputeGradient(const cv::Mat& src, cv::Mat& Fx, cv::Mat& Fy)
 {
 	cv::Mat src_board;
@@ -182,12 +298,6 @@ void ComputeGradient(const cv::Mat& src, cv::Mat& Fx, cv::Mat& Fy)
 	}
 }
 
-/// @brief 计算Thirion Demons位移场的代码实现
-/// @param S 固定图像
-/// @param M 浮动图像
-/// @param Tx 水平方向位移场
-/// @param Ty 竖直方向位移场
-/// @param alpha 速度扩散系数
 void ThirionDemonsForce(const cv::Mat& S, const cv::Mat& M,
 	cv::Mat& Tx, cv::Mat& Ty, const  float alpha)
 {
@@ -233,12 +343,6 @@ void ThirionDemonsForce(const cv::Mat& S, const cv::Mat& M,
 	}
 }
 
-/// @brief 计算Active Demons位移场的代码实现
-/// @param S 固定图像
-/// @param M 浮动图像
-/// @param Tx 水平方向位移场
-/// @param Ty 竖直方向位移场
-/// @param alpha 速度扩散系数
 void ActiveDemonsForce(const cv::Mat& S, const cv::Mat& M,
 	cv::Mat& Tx, cv::Mat& Ty, const  float alpha)
 {
@@ -284,12 +388,6 @@ void ActiveDemonsForce(const cv::Mat& S, const cv::Mat& M,
 	}
 }
 
-/// @brief 计算Symmetric demons位移场的代码实现
-/// @param S 固定图像
-/// @param M 浮动图像
-/// @param Tx 水平方向位移场
-/// @param Ty 竖直方向位移场
-/// @param alpha 速度扩散系数
 void SymmetricDemonsForce(const cv::Mat& S, const cv::Mat& M,
 	cv::Mat& Tx, cv::Mat& Ty, const  float alpha)
 {
@@ -345,10 +443,6 @@ void SymmetricDemonsForce(const cv::Mat& S, const cv::Mat& M,
 /*    Smoothing                                                         */
 /************************************************************************/
 
-/// @brief 图像平滑
-/// @param src 源图像
-/// @param dst 目标图像
-/// @param sigma 高斯函数标准差
 void GaussianSmoothing(const cv::Mat& src, cv::Mat& dst, const float sigma)
 {
 	// 向上取整
@@ -359,14 +453,15 @@ void GaussianSmoothing(const cv::Mat& src, cv::Mat& dst, const float sigma)
 	cv::GaussianBlur(src, dst, cv::Size(ksize, ksize), sigma);
 }
 
-/// @brief 构造图像金字塔
-/// @param src 源图像
-/// @param gauss_pyramid 图像金字塔
-/// @param layers 图像金字塔层数
 void GaussPyramid(const cv::Mat& src,
-	std::vector<cv::Mat>& gauss_pyramid, const int layers)
+	std::vector<cv::Mat>& gauss_pyramid, const int min_width)
 {
-	// 构建图像金字塔，共四层，可直接在此处修改金字塔的层数
+	const float py_ratio = 0.5;
+	const int max_col_row = src.cols > src.rows ? src.cols : src.rows;
+	const int layers = std::log(static_cast<float>(min_width) / max_col_row)
+		/ std::log(py_ratio);
+
+	// 构建图像金字塔
 	cv::Mat current_img = src;
 	gauss_pyramid.emplace_back(current_img);
 	for (int i = 0; i < layers - 1; i++)
@@ -383,10 +478,6 @@ void GaussPyramid(const cv::Mat& src,
 /*    Metrics                                                           */
 /************************************************************************/
 
-/// @brief 计算映射后的mask，像素的位置经过映射后超边界则将其置为0，统计相似度时不再考虑
-/// @param Tx 水平方向位移场
-/// @param Ty 竖直方向位移场
-/// @param mask 映射后mask
 void ComputeMask(const cv::Mat& Tx, const cv::Mat& Ty, cv::Mat& mask)
 {
 	mask = cv::Mat::zeros(Tx.size(), CV_8UC1);
@@ -410,11 +501,6 @@ void ComputeMask(const cv::Mat& Tx, const cv::Mat& Ty, cv::Mat& mask)
 	}
 }
 
-/// @brief 根据当前固定图像和浮动图像计算相关系数
-/// @param S 固定图像
-/// @param Mi 浮动图像
-/// @param Mask 映射后mask
-/// @return 相关系数
 double ComputeCCMask(const cv::Mat& S, const cv::Mat& Mi, const cv::Mat& Mask)
 {
 	float sum1 = 0.0;
@@ -448,12 +534,6 @@ double ComputeCCMask(const cv::Mat& S, const cv::Mat& Mi, const cv::Mat& Mask)
 /*    Remap and Exp Composite                                           */
 /************************************************************************/
 
-/// @brief 像素重映射
-/// @param src 源图像
-/// @param dst 目标图像
-/// @param Tx 水平方向位移场
-/// @param Ty 竖直方向位移场
-/// @param interpolation 插值方法
 void MovePixels(const cv::Mat& src, cv::Mat& dst,
 	const cv::Mat& Tx, const cv::Mat& Ty,
 	const int interpolation)
@@ -475,9 +555,6 @@ void MovePixels(const cv::Mat& src, cv::Mat& dst,
 	cv::remap(src, dst, Tx_map, Ty_map, interpolation);
 }
 
-/// @brief 复合运算实现
-/// @param vx 水平方向位移场
-/// @param vy 竖直方向位移场
 void ExpComposite(cv::Mat& vx, cv::Mat& vy)
 {
 	// 复合运算实现
@@ -493,11 +570,6 @@ void ExpComposite(cv::Mat& vx, cv::Mat& vy)
 	vy = vy + byp;
 }
 
-/// @brief Exp域中微分同胚映射转换实现
-/// @param vx 水平方向位移场
-/// @param vy 竖直方向位移场
-/// @param vx_out 水平方向位移场优化结果
-/// @param vy_out 竖直方向位移场优化结果
 void ExpField(const cv::Mat& vx, const cv::Mat& vy,
 	cv::Mat& vx_out, cv::Mat& vy_out)
 {
