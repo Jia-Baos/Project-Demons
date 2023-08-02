@@ -31,7 +31,7 @@ void Demons::SingleScale(const cv::Mat& fixed_image, const cv::Mat& moved_image)
 		demons_params.sigma_fluid_,
 		demons_params.sigma_diffusion_);
 
-	std::vector<cv::Mat> flow{ flow_x,flow_y };
+	std::vector<cv::Mat> flow{ flow_x, flow_y };
 	cv::merge(flow, this->flow_);
 
 	MovePixels(this->moved_image_, this->moved_image_warpped_,
@@ -61,7 +61,7 @@ void Demons::MultiScale(const cv::Mat& fixed_image, const cv::Mat& moved_image)
 		demons_params.sigma_fluid_,
 		demons_params.sigma_diffusion_);
 
-	std::vector<cv::Mat> flow{ flow_x,flow_y };
+	std::vector<cv::Mat> flow{ flow_x, flow_y };
 	cv::merge(flow, this->flow_);
 
 	MovePixels(this->moved_image_, this->moved_image_warpped_,
@@ -162,7 +162,7 @@ float DemonsSingle(const cv::Mat& S0,
 			// 如果相关系数提高，则更新M1、最佳相关系数，位移场
 			// 需要注意的是，即使当前的更新使得相关系数降低，我们也会承认这次更新的结果，但我们拒绝此次更新产生的位移场
 			// 我们可以理解为算法在此时陷入局部极值，但不可否认的是继续迭代是有可能获取更好的结果的，故不应在此时终止迭代
-			std::cout << "epoch = " << i << "; cc = " << cc_min << std::endl;
+			// std::cout << "epoch = " << i << "; cc = " << cc_min << std::endl;
 			cc_min = cc_curr;
 			sx_min = sx.clone();
 			sy_min = sy.clone();
@@ -196,7 +196,7 @@ void DemonsMulti(const std::vector<cv::Mat>& fixed_image_pyramid,
 
 	for (int iter = 0; iter < layers; iter++)
 	{
-		std::cout << "curr layer: " << iter << std::endl;
+		// std::cout << "curr layer: " << iter << std::endl;
 
 		const cv::Mat fixed_image_curr = fixed_image_pyramid[iter];
 		const cv::Mat moved_image_curr = moved_image_pyramid_tmp[iter];
@@ -250,7 +250,7 @@ void DemonsMulti(const std::vector<cv::Mat>& fixed_image_pyramid,
 				// 如果相关系数提高，则更新M1、最佳相关系数，位移场
 				// 需要注意的是，即使当前的更新使得相关系数降低，我们也会承认这次更新的结果，但我们拒绝此次更新产生的位移场
 				// 我们可以理解为算法在此时陷入局部极值，但不可否认的是继续迭代是有可能获取更好的结果的，故不应在此时终止迭代
-				std::cout << "epoch = " << i << "; cc = " << cc_min << std::endl;
+				// std::cout << "epoch = " << i << "; cc = " << cc_min << std::endl;
 				cc_min = cc_curr;
 				sx_min = sx.clone();
 				sy_min = sy.clone();

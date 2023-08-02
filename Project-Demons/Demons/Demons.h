@@ -33,8 +33,8 @@ public:
 	demons_params_t demons_params;
 
 	Demons();
-	~Demons();
 	Demons(const demons_params_t& demons_params);
+	~Demons();
 
 	void SingleScale(const cv::Mat& fixed_image, const cv::Mat& moved_image);
 	void DemonsRefinement(const cv::Mat& fixed_image, const cv::Mat& moved_image, cv::Mat& flow);
